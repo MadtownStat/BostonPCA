@@ -9,11 +9,12 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Overview
 This PCA analysis was conducted using data from https://data.boston.gov on Boston housing market data from 2024.
 Analysis was conducted using Principle Component Analysis from the package longpca. Longpca is an open source package developed by Karl Rohe at the University of Wisconsin-Madison. We describe methods of analysis and then highlight variables of interest.
 
-# Load Packages
-```{r, warning=FALSE}
+### Load Packages
+```{r, warning=FALSE, echo = FALSE, message = FALSE}
 library(devtools)
 library(longpca)
 library(vctrs)
@@ -37,8 +38,8 @@ library(ggfortify)
 library(patchwork)
 ```
 
-# Let functions live here:
-```{r, warning=FALSE}
+### Let functions live here:
+```{r, warning=FALSE, echo = FALSE, message = FALSE}
 remove_outliers <- function(x) {
   Q1 <- quantile(x, 0.25, na.rm = T)
   Q3 <- quantile(x, 0.75, na.rm = T)
@@ -50,17 +51,17 @@ remove_outliers <- function(x) {
 }
 ```
 
-# Call data:
-```{r, warning=FALSE}
-Boston <- read.csv("~/Desktop/FUN Code/BostonPCA/Boston_2024.csv")
+### Call data:
+```{r, warning=FALSE, echo = FALSE, message = FALSE}
+Boston <- read.csv("~/Desktop/FUN Code/BostonPCA/PCAReadME/Boston_2024.csv")
 
 boston_map <- places(state = "MA", cb = TRUE) %>%
   filter(NAME == "Boston") %>%
   st_as_sf()
 ```
 
-# Process data:
-```{r, warning=FALSE}
+#### Process data:
+```{r, warning=FALSE, echo = FALSE, message = FALSE}
 # Turn values numeric:
 Boston$LAND_VALUE <- as.numeric(gsub(",", "", Boston$LAND_VALUE))
 Boston$LAND_SF <- as.numeric(gsub(",", "", Boston$LAND_SF))
@@ -79,15 +80,15 @@ Boston$GROSS_AREA[Boston$GROSS_AREA == 0] <- NA
 Boston$YR_BUILT[Boston$YR_BUILT == 0] <- NA
 ```
 
-# Run the PCA:
-```{r, warning=FALSE}
+## Run the PCA:
+```{r, warning=FALSE, message = FALSE}
 formula = TOTAL_VALUE ~ (YR_BUILT & ZIP_CODE)*(LIVING_AREA & BED_RMS & LAND_SF)
 im = make_interaction_model(Boston, formula)
 pcs2a = pca(im, k = 6)
 ```
 
-# Create a pca merged data frame for mapping:
-```{r, warning=FALSE}
+### Create a pca merged data frame for mapping:
+```{r, warning=FALSE, echo = FALSE, message = FALSE}
 MA_zips <- search_state('MA')
 MA_zips$ZIP_CODE <- as.character(MA_zips$zipcode)
 pca_features <- pcs2a$row_features
@@ -100,7 +101,7 @@ PCA_Merged <- merge(pca_features, MA_zips, by = "ZIP_CODE", all.x = T)
 PCA_Merged$YR_BUILT <- remove_outliers(PCA_Merged$YR_BUILT)
 ```
 
-```{r, warning=FALSE, echo = FALSE}
+```{r, warning=FALSE, echo = FALSE, message = FALSE}
 PCA_Merged$pc_1_rows <- remove_outliers(PCA_Merged$pc_1_rows)
 PCA_Merged$pc_2_rows <- remove_outliers(PCA_Merged$pc_2_rows)
 PCA_Merged$pc_3_rows <- remove_outliers(PCA_Merged$pc_3_rows)
@@ -118,7 +119,7 @@ plot(pcs2a)
 ## Plot data against year built:
 Overall we see that housing prices increase as the house was built more recently. However, our loadings are small suggesting that date produced doesn't excert a ton of influence on our home prices. The exception to this comes in for houses built around the late 50's - 60's where we see a decline in housing prices. My hypothesis is that this housing price decrease reflects the legacy of suburban growth during the same era. We saw a massive influx of suburban developments during the 60s. Many of these homes were cheaply built and put up in mass developments. Could be a possible reason we see homes built in this era with lower value. 
 
-```{r, warning=FALSE}
+```{r, warning=FALSE, message = FALSE}
 PCA_Merged %>% 
   select(YR_BUILT, contains("pc_")) %>% 
   pivot_longer(contains("pc_"), names_to = "pc_dimension", values_to = "loadings")|>
