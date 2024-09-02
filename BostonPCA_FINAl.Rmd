@@ -1,0 +1,237 @@
+---
+title: "BostonPCA Output"
+author: "Jonathan Morris"
+date: "2024-09-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This PCA analysis was conducted using data from https://data.boston.gov on Boston housing market data from 2024.
+Analysis was conducted using Principle Component Analysis from the package longpca. Longpca is an open source package developed by Karl Rohe at the University of Wisconsin-Madison. We describe methods of analysis and then highlight variables of interest.
+
+# Load Packages
+```{r, warning=FALSE}
+library(devtools)
+library(longpca)
+library(vctrs)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(tidygeocoder)
+library(sf)
+library(mapview)
+library(zipcodeR)
+library(ggmap)
+library(zipcodeR)
+library(tidyverse)
+library(maps)
+library(ggthemes)
+library(ggplot2)
+library(tigris)
+library(sf)
+library(dplyr)
+library(ggfortify)
+library(patchwork)
+```
+
+# Let functions live here:
+```{r, warning=FALSE}
+remove_outliers <- function(x) {
+  Q1 <- quantile(x, 0.25, na.rm = T)
+  Q3 <- quantile(x, 0.75, na.rm = T)
+  IQR <- Q3 - Q1
+  lower_bound <- Q1 - 1.5 * IQR
+  upper_bound <- Q3 + 1.5 * IQR
+  x[x < lower_bound | x > upper_bound] <- NA
+  return(x)
+}
+```
+
+# Call data:
+```{r, warning=FALSE}
+Boston <- read.csv("~/Desktop/FUN Code/BostonPCA/Boston_2024.csv")
+
+boston_map <- places(state = "MA", cb = TRUE) %>%
+  filter(NAME == "Boston") %>%
+  st_as_sf()
+```
+
+# Process data:
+```{r, warning=FALSE}
+# Turn values numeric:
+Boston$LAND_VALUE <- as.numeric(gsub(",", "", Boston$LAND_VALUE))
+Boston$LAND_SF <- as.numeric(gsub(",", "", Boston$LAND_SF))
+Boston$BLDG_VALUE <- as.numeric(gsub(",", "", Boston$BLDG_VALUE))
+Boston$TOTAL_VALUE <- as.numeric(gsub(",", "", Boston$TOTAL_VALUE))
+Boston$GROSS_TAX <- as.numeric(gsub(",", "", Boston$GROSS_TAX))
+Boston$GROSS_AREA <- as.numeric(gsub(",", "", Boston$GROSS_AREA))
+Boston$YR_BUILT <- as.integer(gsub(",", "", Boston$YR_BUILT))
+
+# Add NA values:
+Boston$LAND_VALUE[Boston$LAND_VALUE == 0] <- NA
+Boston$BLDG_VALUE[Boston$BLDG_VALUE == 0] <- NA
+Boston$TOTAL_VALUE[Boston$TOTAL_VALUE == 0] <- NA
+Boston$GROSS_TAX[Boston$GROSS_TAX == 0] <- NA
+Boston$GROSS_AREA[Boston$GROSS_AREA == 0] <- NA
+Boston$YR_BUILT[Boston$YR_BUILT == 0] <- NA
+```
+
+# Run the PCA:
+```{r, warning=FALSE}
+formula = TOTAL_VALUE ~ (YR_BUILT & ZIP_CODE)*(LIVING_AREA & BED_RMS & LAND_SF)
+im = make_interaction_model(Boston, formula)
+pcs2a = pca(im, k = 6)
+```
+
+# Create a pca merged data frame for mapping:
+```{r, warning=FALSE}
+MA_zips <- search_state('MA')
+MA_zips$ZIP_CODE <- as.character(MA_zips$zipcode)
+pca_features <- pcs2a$row_features
+
+# Merge the data frames based on ZIP_CODE
+pca_features$ZIP_CODE <- sprintf("%05d", as.numeric(pca_features$ZIP_CODE))
+pca_features$ZIP_CODE <- as.character(pca_features$ZIP_CODE)
+MA_zips$ZIP_CODE <- as.character(MA_zips$ZIP_CODE)
+PCA_Merged <- merge(pca_features, MA_zips, by = "ZIP_CODE", all.x = T)
+PCA_Merged$YR_BUILT <- remove_outliers(PCA_Merged$YR_BUILT)
+```
+
+```{r, warning=FALSE, echo = FALSE}
+PCA_Merged$pc_1_rows <- remove_outliers(PCA_Merged$pc_1_rows)
+PCA_Merged$pc_2_rows <- remove_outliers(PCA_Merged$pc_2_rows)
+PCA_Merged$pc_3_rows <- remove_outliers(PCA_Merged$pc_3_rows)
+PCA_Merged$pc_4_rows <- remove_outliers(PCA_Merged$pc_4_rows)
+PCA_Merged$pc_5_rows <- remove_outliers(PCA_Merged$pc_5_rows)
+PCA_Merged$pc_6_rows <- remove_outliers(PCA_Merged$pc_6_rows)
+```
+
+
+# Look at PCA plot output:
+```{r, warning=FALSE}
+plot(pcs2a)
+```
+
+## Plot data against year built:
+Overall we see that housing prices increase as the house was built more recently. However, our loadings are small suggesting that date produced doesn't excert a ton of influence on our home prices. The exception to this comes in for houses built around the late 50's - 60's where we see a decline in housing prices. My hypothesis is that this housing price decrease reflects the legacy of suburban growth during the same era. We saw a massive influx of suburban developments during the 60s. Many of these homes were cheaply built and put up in mass developments. Could be a possible reason we see homes built in this era with lower value. 
+
+```{r, warning=FALSE}
+PCA_Merged %>% 
+  select(YR_BUILT, contains("pc_")) %>% 
+  pivot_longer(contains("pc_"), names_to = "pc_dimension", values_to = "loadings")|>
+  ggplot(aes(x = YR_BUILT, y = loadings)) + geom_line() + 
+  facet_wrap(~pc_dimension, scales= "free") + geom_smooth()
+```
+
+## Plot on a map:
+We see an interesting trend here. It seem like these PC Rows pick up on the price of housing based on zip code. We see higher PC values in neighborhoods that have higher home price and also have lower numbers of occupied housing units, thus implying that the houses are bigger. Loadings are also somewhat small.
+
+```{r, warning=FALSE}
+#Create average loading data frame.
+PCA_AVG <- PCA_Merged %>%
+  group_by(ZIP_CODE) |> 
+  summarize(pc_1_rows = mean(pc_1_rows, na.rm = T), pc_2_rows = mean(pc_2_rows, na.rm = T), pc_3_rows = mean(pc_3_rows, na.rm = T), pc_4_rows = mean(pc_4_rows, na.rm = T), pc_5_rows = mean(pc_5_rows, na.rm = T), pc_6_rows = mean(pc_6_rows, na.rm = T), lat = mean(lat, na.rm = T), lng = mean(lng, na.rm = T), YR_BUILT = mean(YR_BUILT, na.rm = T), median_home_value = mean(median_home_value, na.rm = T), occupied_housing_units = mean(occupied_housing_units, na.rm = T))
+# Create a long data frame with average loadings.
+PCA_Merged_long <- PCA_AVG |> 
+  pivot_longer(cols = starts_with("pc_"), names_to = "PC", values_to = "value") 
+# Plot all 6 PC's with facet_wrap
+ggplot() +
+  geom_sf(data = boston_map, fill = "lightgray", color = "white") +
+  geom_point(data = PCA_Merged_long, aes(x = lng, y = lat, color = value, size = YR_BUILT), alpha = 0.01) +
+   geom_jitter(data = PCA_Merged, aes(x = lng, y = lat, color = pc_3_rows, size = YR_BUILT), 
+              width = 0.01, height = 0.01, alpha = 0.01) +
+  scale_color_viridis_c(name = "PC Value") +
+  scale_size_continuous(name = "Year Built") +
+  coord_sf() +
+  labs(title = "PCA Plot on Boston Map", x = "Longitude", y = "Latitude") +
+  facet_wrap(~ PC, ncol = 3) +  # Adjust ncol to arrange the plots as desired
+  theme_minimal()
+
+
+ggplot() +
+  geom_sf(data = boston_map, fill = "lightgray", color = "white") +
+  geom_point(data = PCA_AVG, aes(x = lng, y = lat, color = median_home_value, size = YR_BUILT), alpha = 0.7) +
+  geom_jitter(data = PCA_AVG, aes(x = lng, y = lat, color = median_home_value, size = YR_BUILT), 
+              width = 0.01, height = 0.01, alpha = 0.01) +
+  scale_color_viridis_c(name = "Median Home Value 24'") +
+  scale_size_continuous(name = "Year Built") +
+  coord_sf() +
+  labs(title = "PCA Plot on Boston Map", x = "Longitude", y = "Latitude") +
+  theme_minimal()
+
+ggplot() +
+  geom_sf(data = boston_map, fill = "lightgray", color = "white") +
+  geom_point(data = PCA_AVG, aes(x = lng, y = lat, color = occupied_housing_units , size = YR_BUILT), alpha = 0.7) +
+  geom_jitter(data = PCA_AVG, aes(x = lng, y = lat, color = occupied_housing_units, size = YR_BUILT), 
+              width = 0.01, height = 0.01, alpha = 0.01) +
+  scale_color_viridis_c(name = "# Occupied Housing Units 24'") +
+  scale_size_continuous(name = "Year Built") +
+  coord_sf() +
+  labs(title = "PCA Plot on Boston Map", x = "Longitude", y = "Latitude") +
+  theme_minimal()
+```
+## Now lets look at the colums. Starting with land square footage.
+
+```{r}
+PCS_Cols <- pcs2a$column_features
+
+PCS_Cols %>% 
+  select(LAND_SF, contains("pc_")) %>% 
+  pivot_longer(contains("pc_"), names_to = "pc_dimension", values_to = "loadings")|>
+  filter(LAND_SF < 2000) |> 
+  ggplot(aes(x = LAND_SF, y = loadings)) + 
+  geom_point() +  
+  ggtitle("Land Square Footage vs. Loadings") + 
+  facet_wrap(~pc_dimension, scales= "free") + geom_smooth()
+
+
+PCS_Long <- PCS_Cols %>% 
+  select(LAND_SF, contains("pc_")) %>% 
+  pivot_longer(contains("pc_"), names_to = "pc_dimension", values_to = "loadings")|>
+  filter(LAND_SF < 2000)
+```
+
+## It looks almost like we see an upward trend with our data. As our square footage gets bigger, do our loadings get higher? Let's test with a linear model.
+
+```{r}
+summary(lm(LAND_SF ~ loadings, PCS_Long))
+```
+
+We see that this assumption is likely correct. Homes with very high square footage account for a huge amount of variability in home price and exert a lot of influence on our data overall. This suggests that land square footage is a key variable of interest when predicting home price. This is quite obvious however.
+
+## Now let's look at living area square footage and number of bedrooms:
+
+```{r}
+PCS_Cols %>% 
+  select(LIVING_AREA, contains("pc_")) %>% 
+  pivot_longer(contains("pc_"), names_to = "pc_dimension", values_to = "loadings")|>
+  filter(LIVING_AREA < 2000) |> # Filter out the outliers so the plots are readable.
+  ggplot(aes(x = LIVING_AREA, y = loadings)) + 
+  geom_point() +  
+  ggtitle("Living Area Square Footage vs. Loadings") + 
+  facet_wrap(~pc_dimension, scales= "free") + geom_smooth()
+
+PCS_Cols %>% 
+  select(BED_RMS, contains("pc_")) %>% 
+  pivot_longer(contains("pc_"), names_to = "pc_dimension", values_to = "loadings")|>
+  filter(BED_RMS < 2000) |> # Filter out the outliers so the plots are readable.
+  ggplot(aes(x = BED_RMS, y = loadings)) + 
+  geom_point() +  
+  ggtitle("Number of Bedrooms vs. Loadings") + 
+  facet_wrap(~pc_dimension, scales= "free") + geom_smooth()
+```
+
+We see the same trend from land square footage for living area square footage. However, we see that the houses with lower numbers of bedrooms have much higher loadings. Could be due to the fact that only a small number of houses have more than five bedrooms. Overall, this suggests that houses with 5 for less bedrooms contribute significantly to the variance seen in our data. This makes sense as Boston is an older American city, so land value is especially high. There is a lot of variance in the price of houses based on bedrooms because high priced houses may be costly for factors like location, and may often have limited space.
+
+
+# Overall Interpretation:
+Recall our model once more: formula = TOTAL_VALUE ~ (YR_BUILT & ZIP_CODE)*(LIVING_AREA & BED_RMS & LAND_SF).
+
+It seems as though the year the home was built and zip code provide interesting and informative predictions toward the total value of the home. We see that more recent homes are often worth more. There is also an interesting period in the 50s - 60s where homes produced in that era are now worth less. Overall we see differences in price based on zip code. It's clear that our model picked up on variability in home prices based on neighborhoods where homes are more valuable. However, since Boston is a pretty expensive city, and our PCA only looked at zip code, our model suggests that there isn't a ton of variability in home price based on zip code. I am sure this would change if we looked somewhere else or used neighborhood as a term instead of zip code.
+
+We see that our PCA suggests that overall land square footage and living area square footage account for major variability in our data. Homes with high square footage account especially for the variability we see in home price. We see this trend change when we look at number of bedrooms. Homes with an extremely high number of bedrooms don't account for much variability while homes with 5 or less bedrooms account for a ton of variability in our data. 
+
+Overall, a successful method for uncovering which variables are most important here. If I were analyzing this data further I'd look into how differences in the size of a home interact with location and avg number of residents to predict home price. I'd also like to look at these trends over time to see how housing prices have fluctuated over the past 10 years. 
